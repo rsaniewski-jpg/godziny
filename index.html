@@ -85,6 +85,12 @@
   label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); margin-bottom: 12px; }
   input { font: inherit; color: var(--text); background: var(--field); border: 1px solid var(--line);
           border-radius: 10px; padding: 10px 12px; width: 100%; min-height: 44px; }
+  .tsel { display: flex; align-items: center; gap: 4px; }
+  .tsel select { flex: 1; min-width: 0; font: inherit; color: var(--text); background: var(--field);
+                 border: 1px solid var(--line); border-radius: 10px; padding: 10px 6px; min-height: 44px;
+                 text-align: center; text-align-last: center; -webkit-appearance: none; appearance: none;
+                 font-variant-numeric: tabular-nums; }
+  .tsel span { color: var(--muted); font-weight: 600; }
   .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .actions { display: flex; gap: 8px; margin-top: 6px; }
   .actions button { flex: 1; border: 0; border-radius: 12px; padding: 12px; font-weight: 600; background: var(--field); }
@@ -125,8 +131,8 @@
     </div>
     <label>Data <input type="date" id="qDate"></label>
     <div class="two">
-      <label>Start <input type="time" id="qStart"></label>
-      <label>Koniec <input type="time" id="qEnd"></label>
+      <label>Start <div class="tsel" id="qStart"></div></label>
+      <label>Koniec <div class="tsel" id="qEnd"></div></label>
     </div>
     <label>Przerwa (minuty) <input type="number" id="qBreak" min="0" step="5" inputmode="numeric"></label>
     <div class="preview" id="qPreview"></div>
@@ -152,8 +158,8 @@
   <h3 id="dlgTitle">Nowy wpis</h3>
   <label>Data <input type="date" id="fDate"></label>
   <div class="two">
-    <label>Start <input type="time" id="fStart"></label>
-    <label>Koniec <input type="time" id="fEnd"></label>
+    <label>Start <div class="tsel" id="fStart"></div></label>
+    <label>Koniec <div class="tsel" id="fEnd"></div></label>
   </div>
   <div class="hint" id="endHint"></div>
   <label>Przerwa (minuty) <input type="number" id="fBreak" min="0" step="5" inputmode="numeric"></label>
@@ -218,6 +224,40 @@ function makeDate(dateStr, timeStr) {
   return new Date(y, mo - 1, d, h, mi || 0)
 }
 const daysLabel = n => n === 1 ? "dzień" : "dni"
+
+// ---------- Wybór godziny (zamiast systemowego zegara) ----------
+function makeTimeSelect(id, optional) {
+  const box = $(id)
+  const h = document.createElement("select"), m = document.createElement("select")
+  h.setAttribute("aria-label", "Godzina")
+  m.setAttribute("aria-label", "Minuty")
+  if (optional) { h.add(new Option("--", "")); m.add(new Option("--", "")) }
+  for (let i = 0; i < 24; i++) h.add(new Option(pad(i), pad(i)))
+  for (let i = 0; i < 60; i += 5) m.add(new Option(pad(i), pad(i)))
+  const sep = document.createElement("span")
+  sep.textContent = ":"
+  box.append(h, sep, m)
+  const fire = () => box.dispatchEvent(new Event("input"))
+  h.onchange = () => { if (optional) { if (h.value && !m.value) m.value = "00"; if (!h.value) m.value = "" } fire() }
+  m.onchange = () => { if (optional) { if (m.value && !h.value) h.value = "08"; if (!m.value) h.value = "" } fire() }
+  Object.defineProperty(box, "value", {
+    get: () => (h.value && m.value ? `${h.value}:${m.value}` : ""),
+    set: v => {
+      const [hh, mm] = String(v || "").split(":")
+      if (!hh || !mm) { if (optional) { h.value = ""; m.value = "" } return }
+      if (![...m.options].some(o => o.value === mm)) { // np. 07:43 z wcześniejszego wpisu
+        const before = [...m.options].find(o => o.value && o.value > mm)
+        m.add(new Option(mm, mm), before || null)
+      }
+      h.value = hh
+      m.value = mm
+    }
+  })
+}
+makeTimeSelect("qStart")
+makeTimeSelect("qEnd")
+makeTimeSelect("fStart")
+makeTimeSelect("fEnd", true)
 
 // ---------- Ustawienia ----------
 const SKEY = KEY + "-settings"
