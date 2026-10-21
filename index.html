@@ -93,6 +93,9 @@
   .empty { text-align: center; color: var(--muted); padding: 24px; background: var(--card); border-radius: 14px; }
 
   .tools { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .backup-info { text-align: center; font-size: 13px; color: var(--muted); margin-top: -6px; }
+  .backup-info.late { color: var(--stop); font-weight: 600; }
+  #bdlg p { margin: 0 0 16px; color: var(--muted); }
   .author { text-align: center; font-size: 13px; color: var(--muted); padding: 8px 0 4px; }
   .tools button { border: 1px solid var(--line); background: var(--card); border-radius: 12px; padding: 10px 6px; font-size: 13px; }
 
@@ -205,8 +208,19 @@
     <input type="file" id="file" accept=".json,application/json,text/plain" hidden>
   </section>
 
+  <div class="backup-info" id="backupInfo"></div>
+
   <footer class="author">Autor: Rafał Saniewski · 2026</footer>
 </main>
+
+<dialog id="bdlg">
+  <h3>Czas na backup 💾</h3>
+  <p id="bmsg"></p>
+  <div class="actions">
+    <button id="bLater">Później</button>
+    <button class="primary" id="bNow" autofocus>Zrób backup</button>
+  </div>
+</dialog>
 
 <dialog id="dlg">
   <h3 id="dlgTitle">Nowy wpis</h3>
@@ -395,6 +409,7 @@ function render() {
   const total = entries.reduce((s, e) => s + entryHours(e), 0)
 
   renderMonthSel()
+  if (typeof renderBackupInfo === "function") renderBackupInfo()
   $("total").textContent = `${fmtHours(total)} h`
   const hOf = t => entries.filter(e => e.type === t).reduce((s, e) => s + entryHours(e), 0)
   const absParts = Object.keys(ABS).map(t => [t, hOf(t)]).filter(([, h]) => h > 0)
@@ -730,19 +745,79 @@ $("del").onclick = () => {
 async function shareFile(name, text, type) {
   const file = new File([text], name, { type })
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
-    try { await navigator.share({ files: [file], title: name }); return }
-    catch (e) { if (e.name === "AbortError") return }
+    try { await navigator.share({ files: [file], title: name }); return true }
+    catch (e) { if (e.name === "AbortError") return false }
   }
   const url = URL.createObjectURL(file)
   const a = document.createElement("a")
   a.href = url; a.download = name
   document.body.appendChild(a); a.click(); a.remove()
   setTimeout(() => URL.revokeObjectURL(url), 2000)
+  return true
 }
 
-$("exportJson").onclick = () => {
-  shareFile(`godziny-pracy-${isoDate(new Date())}.json`, JSON.stringify(data, null, 2), "text/plain")
+// ---------- Backup co 7 dni ----------
+const BACKUP_DAYS = 7
+const BACKUP_NAME = "godziny-pracy-backup.json"
+const DAY_MS = 86400000
+
+async function doBackup() {
+  const ok = await shareFile(BACKUP_NAME, JSON.stringify(data, null, 2), "text/plain")
+  if (ok) {
+    settings.lastBackup = new Date().toISOString()
+    delete settings.backupSnooze
+    saveSettings()
+    renderBackupInfo()
+  }
+  return ok
 }
+
+function backupDue() {
+  if (!data.length) return false
+  const now = Date.now()
+  if (settings.backupSnooze && now < new Date(settings.backupSnooze).getTime()) return false
+  if (!settings.lastBackup && !settings.backupBase) {        // pierwszy raz z danymi: odliczaj od dziś
+    settings.backupBase = new Date().toISOString()
+    saveSettings()
+  }
+  const since = new Date(settings.lastBackup || settings.backupBase).getTime()
+  return now - since >= BACKUP_DAYS * DAY_MS
+}
+
+function renderBackupInfo() {
+  const el = $("backupInfo")
+  if (!settings.lastBackup) {
+    el.textContent = data.length ? "Nie zrobiono jeszcze backupu" : ""
+    el.className = "backup-info" + (data.length ? " late" : "")
+    return
+  }
+  const d = new Date(settings.lastBackup)
+  const days = Math.floor((Date.now() - d.getTime()) / DAY_MS)
+  el.textContent = `Ostatni backup: ${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}` +
+    (days >= 1 ? ` (${days} ${days === 1 ? "dzień" : "dni"} temu)` : " (dziś)")
+  el.className = "backup-info" + (days >= BACKUP_DAYS ? " late" : "")
+}
+
+function checkBackup() {
+  renderBackupInfo()
+  if (!backupDue() || $("bdlg").open || $("dlg").open) return
+  const last = settings.lastBackup ? new Date(settings.lastBackup) : null
+  $("bmsg").textContent = last
+    ? `Ostatni backup był ${Math.floor((Date.now() - last.getTime()) / DAY_MS)} dni temu. Zapisz plik „${BACKUP_NAME}” w tym samym miejscu co poprzednio (np. iCloud Drive lub Dysk Google) i wybierz „Zastąp”.`
+    : `Twoje godziny są zapisane tylko w tym telefonie. Zapisz kopię „${BACKUP_NAME}” np. na iCloud Drive, Dysku Google albo wyślij ją sobie mailem.`
+  $("bdlg").showModal()
+}
+
+$("bNow").onclick = async () => {
+  if (await doBackup()) $("bdlg").close()
+}
+$("bLater").onclick = () => {
+  settings.backupSnooze = new Date(Date.now() + DAY_MS).toISOString()   // przypomnij jutro
+  saveSettings()
+  $("bdlg").close()
+}
+
+$("exportJson").onclick = () => doBackup()
 
 $("importJson").onclick = () => $("file").click()
 $("file").onchange = async ev => {
@@ -779,7 +854,7 @@ $("exportCsv").onclick = () => {
 }
 
 // ---------- Odświeżanie i offline ----------
-document.addEventListener("visibilitychange", () => { if (!document.hidden) render() })
+document.addEventListener("visibilitychange", () => { if (!document.hidden) { render(); checkBackup() } })
 
 if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
   navigator.serviceWorker.register("sw.js").catch(() => {})
@@ -787,6 +862,7 @@ if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
 
 initQuickForm()
 render()
+setTimeout(checkBackup, 800)
 </script>
 </body>
 </html>
