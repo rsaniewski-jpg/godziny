@@ -50,6 +50,8 @@
   .bar-fill { height: 100%; width: 0; background: var(--accent); border-radius: 4px; transition: width .3s; }
   .bar-fill.done { background: var(--live); }
   .over { color: var(--live); font-weight: 600; }
+  .pay { border-top: 1px solid var(--line); padding-top: 10px; }
+  #payNorm:empty { display: none; }
   .holidays { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 10px; }
   .holidays:empty { display: none; }
   .now { display: grid; gap: 12px; }
@@ -123,6 +125,11 @@
       <span id="normLeft"></span>
       <span id="daysLeft"></span>
     </div>
+    <div class="norm-row pay">
+      <span>Zarobek: <strong id="payText"></strong></span>
+      <button class="link" id="setRate"></button>
+    </div>
+    <div class="norm-row sub" id="payNorm"></div>
     <div class="holidays" id="holidays"></div>
   </section>
 
@@ -214,6 +221,7 @@ const isoDate = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDat
 const fmtHours = h => { const m = Math.round(h * 60); return `${Math.floor(m / 60)}:${pad(m % 60)}` }
 const fmtElapsed = ms => { const s = Math.max(0, Math.floor(ms / 1000)); return `${Math.floor(s / 3600)}:${pad(Math.floor(s / 60) % 60)}:${pad(s % 60)}` }
 const decimal = h => h.toFixed(2).replace(".", ",")
+const money = v => new Intl.NumberFormat("pl-PL", { style: "currency", currency: "PLN" }).format(v)
 function monthStart(d) { return new Date(d.getFullYear(), d.getMonth(), 1) }
 
 function entryHours(e) {
@@ -390,6 +398,27 @@ function renderNorm(norm, total) {
   let txt = parts.length ? "Święta: " + parts.join(" · ") : ""
   if (norm.satHolidays) txt += ` — święto w sobotę obniża wymiar o ${norm.satHolidays * settings.hoursPerDay} h (pracodawca wyznacza inny dzień wolny)`
   $("holidays").textContent = txt
+
+  const rate = settings.rate || 0
+  $("setRate").textContent = rate ? `${money(rate)}/h ✎` : "Ustaw stawkę ✎"
+  $("payText").textContent = rate ? money(total * rate) : "—"
+  $("payNorm").textContent = rate && norm.normHours
+    ? `Za pełny wymiar (${fmtHours(norm.normHours)} h): ${money(norm.normHours * rate)}`
+    : ""
+}
+
+$("setRate").onclick = () => {
+  const cur = settings.rate ? String(settings.rate).replace(".", ",") : ""
+  const v = prompt("Stawka za godzinę w zł (np. 30,50). Zostaw puste, aby usunąć.", cur)
+  if (v === null) return
+  if (v.trim() === "") { settings.rate = 0 }
+  else {
+    const n = parseFloat(v.replace(/\s/g, "").replace(",", "."))
+    if (!(n > 0 && n < 100000)) return alert("Podaj poprawną kwotę, np. 30,50.")
+    settings.rate = Math.round(n * 100) / 100
+  }
+  saveSettings()
+  render()
 }
 
 $("setHours").onclick = () => {
@@ -545,12 +574,16 @@ $("file").onchange = async ev => {
 $("exportCsv").onclick = () => {
   const y = view.getFullYear(), m = view.getMonth()
   const entries = data.filter(e => inMonth(e, y, m))
-  const rows = [["Data", "Start", "Koniec", "Przerwa (min)", "Godziny"]]
+  const rate = settings.rate || 0
+  const rows = [["Data", "Start", "Koniec", "Przerwa (min)", "Godziny"].concat(rate ? ["Kwota (zł)"] : [])]
   for (const e of entries) {
     const s = new Date(e.start)
-    rows.push([isoDate(s), hhmm(s), e.end ? hhmm(new Date(e.end)) : "", e.breakMin, decimal(entryHours(e))])
+    rows.push([isoDate(s), hhmm(s), e.end ? hhmm(new Date(e.end)) : "", e.breakMin, decimal(entryHours(e))]
+      .concat(rate ? [decimal(entryHours(e) * rate)] : []))
   }
-  rows.push(["", "", "", "Suma", decimal(entries.reduce((s, e) => s + entryHours(e), 0))])
+  const sumH = entries.reduce((s, e) => s + entryHours(e), 0)
+  rows.push(["", "", "", "Suma", decimal(sumH)].concat(rate ? [decimal(sumH * rate)] : []))
+  if (rate) rows.push(["", "", "", "Stawka (zł/h)", "", decimal(rate)])
   const csv = "﻿" + rows.map(r => r.join(";")).join("\r\n")
   shareFile(`godziny-${y}-${pad(m + 1)}.csv`, csv, "text/csv")
 }
