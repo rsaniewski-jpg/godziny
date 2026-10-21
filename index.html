@@ -757,7 +757,14 @@ async function shareFile(name, text, type) {
 }
 
 // ---------- Backup co 7 dni ----------
-const BACKUP_DAYS = 7
+// Backup tygodniowy: przypomnienie w niedzielę (podsumowanie tygodnia pn–nd).
+// Jeśli niedziela minie bez backupu, aplikacja przypomni przy najbliższym otwarciu.
+function lastSunday() {
+  const d = new Date()
+  d.setHours(0, 0, 0, 0)
+  d.setDate(d.getDate() - d.getDay())   // getDay(): 0 = niedziela
+  return d
+}
 const BACKUP_NAME = "godziny-pracy-backup.json"
 const DAY_MS = 86400000
 
@@ -781,7 +788,7 @@ function backupDue() {
     saveSettings()
   }
   const since = new Date(settings.lastBackup || settings.backupBase).getTime()
-  return now - since >= BACKUP_DAYS * DAY_MS
+  return since < lastSunday().getTime()
 }
 
 function renderBackupInfo() {
@@ -792,18 +799,20 @@ function renderBackupInfo() {
     return
   }
   const d = new Date(settings.lastBackup)
-  const days = Math.floor((Date.now() - d.getTime()) / DAY_MS)
+  const midnight = x => { const t = new Date(x); t.setHours(0, 0, 0, 0); return t.getTime() }
+  const days = Math.round((midnight(Date.now()) - midnight(d)) / DAY_MS)   // dni kalendarzowe
   el.textContent = `Ostatni backup: ${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}` +
     (days >= 1 ? ` (${days} ${days === 1 ? "dzień" : "dni"} temu)` : " (dziś)")
-  el.className = "backup-info" + (days >= BACKUP_DAYS ? " late" : "")
+  el.className = "backup-info" + (d < lastSunday() ? " late" : "")
 }
 
 function checkBackup() {
   renderBackupInfo()
   if (!backupDue() || $("bdlg").open || $("dlg").open) return
   const last = settings.lastBackup ? new Date(settings.lastBackup) : null
+  const sunday = new Date().getDay() === 0
   $("bmsg").textContent = last
-    ? `Ostatni backup był ${Math.floor((Date.now() - last.getTime()) / DAY_MS)} dni temu. Zapisz plik „${BACKUP_NAME}” w tym samym miejscu co poprzednio (np. iCloud Drive lub Dysk Google) i wybierz „Zastąp”.`
+    ? `${sunday ? "Niedziela, koniec tygodnia (pn–nd)." : "Niedzielny backup nie został zrobiony."} Ostatni backup był ${Math.floor((Date.now() - last.getTime()) / DAY_MS)} dni temu. Zapisz plik „${BACKUP_NAME}” w tym samym miejscu co poprzednio (np. iCloud Drive lub Dysk Google) i wybierz „Zastąp”.`
     : `Twoje godziny są zapisane tylko w tym telefonie. Zapisz kopię „${BACKUP_NAME}” np. na iCloud Drive, Dysku Google albo wyślij ją sobie mailem.`
   $("bdlg").showModal()
 }
