@@ -104,7 +104,7 @@
   input { font: inherit; color: var(--text); background: var(--field); border: 1px solid var(--line);
           border-radius: 10px; padding: 10px 12px; width: 100%; min-height: 44px; }
   [hidden] { display: none !important; }
-  .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; background: var(--field); border-radius: 12px; padding: 4px; }
+  .seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; background: var(--field); border-radius: 12px; padding: 4px; }
   .seg button { border: 0; background: none; border-radius: 9px; padding: 10px; font-weight: 600; color: var(--muted); }
   .seg button.on { background: var(--card); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.18); }
   .fields { display: grid; gap: 12px; }
@@ -170,6 +170,7 @@
     <div class="seg" role="tablist">
       <button data-mode="praca" class="on" role="tab">Praca</button>
       <button data-mode="urlop" role="tab">Urlop</button>
+      <button data-mode="l4" role="tab">L4</button>
     </div>
     <div class="fields" id="workFields">
       <label>Data <input type="date" id="qDate"></label>
@@ -184,7 +185,7 @@
         <label>Od <input type="date" id="vFrom"></label>
         <label>Do <input type="date" id="vTo"></label>
       </div>
-      <label>Godzin urlopu za dzień <input type="number" id="vHours" min="0.5" max="24" step="0.5" inputmode="decimal"></label>
+      <label><span id="vHoursLbl">Godzin urlopu za dzień</span> <input type="number" id="vHours" min="0.5" max="24" step="0.5" inputmode="decimal"></label>
     </div>
     <div class="preview" id="qPreview"></div>
     <button class="big" id="qAdd">Dodaj wpis</button>
@@ -216,7 +217,7 @@
   </div>
   <div class="hint" id="endHint"></div>
   <label id="fBreakWrap">Przerwa (minuty) <input type="number" id="fBreak" min="0" step="5" inputmode="numeric"></label>
-  <label id="fHoursWrap" hidden>Godzin urlopu <input type="number" id="fHours" min="0.5" max="24" step="0.5" inputmode="decimal"></label>
+  <label id="fHoursWrap" hidden>Liczba godzin <input type="number" id="fHours" min="0.5" max="24" step="0.5" inputmode="decimal"></label>
   <div class="actions">
     <button class="danger" id="del">Usuń</button>
     <button id="cancel">Anuluj</button>
@@ -230,6 +231,12 @@ const MONTHS = ["Styczeń","Luty","Marzec","Kwiecień","Maj","Czerwiec","Lipiec"
 const DAYS = ["nd","pn","wt","śr","cz","pt","sb"]
 const $ = id => document.getElementById(id)
 
+// Rodzaje nieobecności liczonych do wymiaru
+const ABS = {
+  urlop: { label: "Urlop", icon: "🌴", gen: "urlopu", paid: true },
+  l4:    { label: "L4",    icon: "🤒", gen: "L4",     paid: false }
+}
+
 // ---------- Dane ----------
 function normalize(arr) {
   if (!Array.isArray(arr)) throw new Error("not array")
@@ -239,7 +246,7 @@ function normalize(arr) {
       start: new Date(e.start).toISOString(),
       end: e.end && !isNaN(new Date(e.end)) ? new Date(e.end).toISOString() : null,
       breakMin: Math.max(0, parseInt(e.breakMin) || 0),
-      ...(e.type === "urlop" ? { type: "urlop" } : {})
+      ...(ABS[e.type] ? { type: e.type } : {})
     }))
 }
 
@@ -389,12 +396,17 @@ function render() {
 
   renderMonthSel()
   $("total").textContent = `${fmtHours(total)} h`
-  const vacH = entries.filter(isUrlop).reduce((s, e) => s + entryHours(e), 0)
-  $("split").textContent = vacH ? `Praca ${fmtHours(total - vacH)} h · Urlop ${fmtHours(vacH)} h` : ""
+  const hOf = t => entries.filter(e => e.type === t).reduce((s, e) => s + entryHours(e), 0)
+  const absParts = Object.keys(ABS).map(t => [t, hOf(t)]).filter(([, h]) => h > 0)
+  const absTotal = absParts.reduce((s, [, h]) => s + h, 0)
+  $("split").textContent = absParts.length
+    ? [`Praca ${fmtHours(total - absTotal)} h`, ...absParts.map(([t, h]) => `${ABS[t].label} ${fmtHours(h)} h`)].join(" · ")
+    : ""
+  const paidHours = total - absParts.filter(([t]) => !ABS[t].paid).reduce((s, [, h]) => s + h, 0)
   const norm = monthNorm(y, m)
   $("days").textContent = `z ${fmtHours(norm.normHours)} h · ${byDay.size} z ${norm.normDays} dni`
   $("heroMonth").textContent = `${MONTHS[m]} ${y}`
-  renderNorm(norm, total)
+  renderNorm(norm, total, paidHours)
 
   const list = $("list")
   list.innerHTML = ""
@@ -411,8 +423,8 @@ function render() {
       const s = new Date(e.start)
       const b = document.createElement("button")
       b.className = "entry"
-      b.innerHTML = isUrlop(e)
-        ? `<span class="tag">🌴 Urlop</span><span>${fmtHours(entryHours(e))}</span>`
+      b.innerHTML = isAbs(e)
+        ? `<span class="tag">${ABS[e.type].icon} ${ABS[e.type].label}</span><span>${fmtHours(entryHours(e))}</span>`
         : `<span>${hhmm(s)} – ${e.end ? hhmm(new Date(e.end)) : '<span class="live">trwa</span>'}` +
           (e.breakMin ? ` <span class="muted">· przerwa ${e.breakMin} min</span>` : "") +
           `</span><span>${fmtHours(entryHours(e))}</span>`
@@ -424,7 +436,7 @@ function render() {
   renderStatus()
 }
 
-function renderNorm(norm, total) {
+function renderNorm(norm, total, paidHours = total) {
   $("normText").textContent = `${norm.normDays} ${daysLabel(norm.normDays)} · ${fmtHours(norm.normHours)} h`
   $("setHours").textContent = `${String(settings.hoursPerDay).replace(".", ",")} h/dzień ✎`
   const pct = norm.normHours ? Math.min(100, total / norm.normHours * 100) : 0
@@ -449,7 +461,7 @@ function renderNorm(norm, total) {
 
   const rate = settings.rate || 0
   $("setRate").textContent = rate ? `${money(rate)}/h ✎` : "Ustaw stawkę ✎"
-  $("payText").textContent = rate ? money(total * rate) : "—"
+  $("payText").textContent = rate ? money(paidHours * rate) + (paidHours < total ? " (bez L4)" : "") : "—"
   $("payNorm").textContent = rate && norm.normHours
     ? `Za pełny wymiar (${fmtHours(norm.normHours)} h): ${money(norm.normHours * rate)}`
     : ""
@@ -498,12 +510,12 @@ function quickEntry() {
   return buildEntry($("qDate").value, $("qStart").value, $("qEnd").value, $("qBreak").value)
 }
 
-const isUrlop = e => e.type === "urlop"
+const isAbs = e => !!ABS[e.type]
 let mode = "praca"
 
-function urlopEntry(d, h) {
+function absEntry(d, h, type) {
   const s = new Date(d.getFullYear(), d.getMonth(), d.getDate())
-  return { type: "urlop", start: s.toISOString(), end: new Date(s.getTime() + h * 3600000).toISOString(), breakMin: 0 }
+  return { type, start: s.toISOString(), end: new Date(s.getTime() + h * 3600000).toISOString(), breakMin: 0 }
 }
 
 function vacationDays() {
@@ -525,14 +537,17 @@ function setMode(mm) {
   mode = mm
   for (const b of document.querySelectorAll(".seg button")) b.classList.toggle("on", b.dataset.mode === mm)
   $("workFields").hidden = mm !== "praca"
-  $("vacFields").hidden = mm !== "urlop"
-  $("qAdd").textContent = mm === "praca" ? "Dodaj wpis" : "Dodaj urlop"
+  $("vacFields").hidden = !ABS[mm]
+  if (ABS[mm]) $("vHoursLbl").textContent = `Godzin ${ABS[mm].gen} za dzień`
+  $("qAdd").textContent = addLabel()
   updatePreview()
 }
 for (const b of document.querySelectorAll(".seg button")) b.onclick = () => setMode(b.dataset.mode)
 
+const addLabel = () => mode === "praca" ? "Dodaj wpis" : `Dodaj ${ABS[mode].label === "L4" ? "L4" : "urlop"}`
+
 function updatePreview() {
-  if (mode === "urlop") {
+  if (ABS[mode]) {
     const days = vacationDays(), h = vacHours(), p = $("qPreview")
     if (!days) { p.textContent = ""; return }
     p.innerHTML = days.length
@@ -566,34 +581,35 @@ $("vFrom").addEventListener("change", () => {
 function flashAdded() {
   const b = $("qAdd")
   b.textContent = "Dodano ✓"
-  setTimeout(() => { b.textContent = mode === "praca" ? "Dodaj wpis" : "Dodaj urlop" }, 1200)
+  setTimeout(() => { b.textContent = addLabel() }, 1200)
 }
 
 function addVacation() {
   const days = vacationDays(), h = vacHours()
   if (!days || !days.length) return alert("Wybierz okres, w którym są dni robocze.")
-  if (!(h > 0 && h <= 24)) return alert("Podaj liczbę godzin urlopu na dzień (np. 8).")
+  if (!(h > 0 && h <= 24)) return alert("Podaj liczbę godzin na dzień (np. 8).")
+  const type = mode
   let added = 0, skipped = 0
   for (const d of days) {
     const key = isoDate(d)
-    if (data.some(x => isUrlop(x) && isoDate(new Date(x.start)) === key)) { skipped++; continue }
-    data.push(urlopEntry(d, h))
+    if (data.some(x => isAbs(x) && isoDate(new Date(x.start)) === key)) { skipped++; continue }
+    data.push(absEntry(d, h, type))
     added++
   }
   view = monthStart(days[0])
   save()
   flashAdded()
-  if (skipped) alert(`Dodano ${added} ${daysLabel(added)} urlopu. Pominięto ${skipped} ${daysLabel(skipped)}, które miały już urlop.`)
+  if (skipped) alert(`Dodano ${added} ${daysLabel(added)} ${ABS[type].gen}. Pominięto ${skipped === 1 ? "1 dzień, który miał" : skipped + " dni, które miały"} już wpisany urlop lub L4.`)
 }
 
 $("qAdd").onclick = () => {
-  if (mode === "urlop") return addVacation()
+  if (ABS[mode]) return addVacation()
   const e = quickEntry()
   if (!e) return alert("Uzupełnij datę oraz godzinę rozpoczęcia i zakończenia.")
   const day = $("qDate").value
   const same = data.filter(x => isoDate(new Date(x.start)) === day)
   if (same.length) {
-    const txt = same.map(x => isUrlop(x) ? "urlop" : `${hhmm(new Date(x.start))}–${x.end ? hhmm(new Date(x.end)) : "?"}`).join(", ")
+    const txt = same.map(x => isAbs(x) ? ABS[x.type].label : `${hhmm(new Date(x.start))}–${x.end ? hhmm(new Date(x.end)) : "?"}`).join(", ")
     if (!confirm(`Ten dzień ma już wpis (${txt}). Dodać kolejny?`)) return
   }
   data.push(e)
@@ -653,11 +669,11 @@ function openDialog(e) {
   $("fStart").value = e ? hhmm(s) : "08:00"
   $("fEnd").value = e ? (e.end ? hhmm(new Date(e.end)) : "") : "16:00"
   $("fBreak").value = e ? e.breakMin : 0
-  const vac = !!(e && isUrlop(e))
+  const vac = !!(e && isAbs(e))
   $("fTimes").hidden = $("fBreakWrap").hidden = $("endHint").hidden = vac
   $("fHoursWrap").hidden = !vac
   if (vac) {
-    $("dlgTitle").textContent = "Edytuj urlop"
+    $("dlgTitle").textContent = `Edytuj: ${ABS[e.type].label}`
     $("fHours").value = Math.round(entryHours(e) * 100) / 100
   }
   $("endHint").textContent = e && !e.end ? "Zostaw koniec pusty, jeśli praca dalej trwa." : "Koniec wcześniej niż start = zmiana nocna."
@@ -668,10 +684,10 @@ function openDialog(e) {
 $("cancel").onclick = () => $("dlg").close()
 
 $("saveBtn").onclick = () => {
-  if (editing && isUrlop(editing)) {
+  if (editing && isAbs(editing)) {
     const date = $("fDate").value, h = parseFloat(String($("fHours").value).replace(",", ".")) || 0
-    if (!date || !(h > 0 && h <= 24)) return alert("Podaj datę i liczbę godzin urlopu.")
-    Object.assign(editing, urlopEntry(makeDate(date, "00:00"), h))
+    if (!date || !(h > 0 && h <= 24)) return alert("Podaj datę i liczbę godzin.")
+    Object.assign(editing, absEntry(makeDate(date, "00:00"), h, editing.type))
     view = monthStart(makeDate(date, "00:00"))
     $("dlg").close()
     return save()
@@ -744,12 +760,14 @@ $("exportCsv").onclick = () => {
   const rows = [["Data", "Rodzaj", "Start", "Koniec", "Przerwa (min)", "Godziny"].concat(rate ? ["Kwota (zł)"] : [])]
   for (const e of entries) {
     const s = new Date(e.start)
-    const v = isUrlop(e)
-    rows.push([isoDate(s), v ? "Urlop" : "Praca", v ? "" : hhmm(s), v || !e.end ? "" : hhmm(new Date(e.end)), v ? "" : e.breakMin, decimal(entryHours(e))]
-      .concat(rate ? [decimal(entryHours(e) * rate)] : []))
+    const v = isAbs(e)
+    const paid = !v || ABS[e.type].paid
+    rows.push([isoDate(s), v ? ABS[e.type].label : "Praca", v ? "" : hhmm(s), v || !e.end ? "" : hhmm(new Date(e.end)), v ? "" : e.breakMin, decimal(entryHours(e))]
+      .concat(rate ? [paid ? decimal(entryHours(e) * rate) : ""] : []))
   }
   const sumH = entries.reduce((s, e) => s + entryHours(e), 0)
-  rows.push(["", "", "", "", "Suma", decimal(sumH)].concat(rate ? [decimal(sumH * rate)] : []))
+  const paidH = entries.filter(e => !isAbs(e) || ABS[e.type].paid).reduce((s, e) => s + entryHours(e), 0)
+  rows.push(["", "", "", "", "Suma", decimal(sumH)].concat(rate ? [decimal(paidH * rate)] : []))
   if (rate) rows.push(["", "", "", "", "Stawka (zł/h)", "", decimal(rate)])
   const csv = "﻿" + rows.map(r => r.join(";")).join("\r\n")
   shareFile(`godziny-${y}-${pad(m + 1)}.csv`, csv, "text/csv")
