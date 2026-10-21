@@ -51,10 +51,12 @@
   .over { color: var(--live); font-weight: 600; }
   .holidays { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 10px; }
   .holidays:empty { display: none; }
-  .now { display: grid; gap: 12px; text-align: center; }
-  .status { color: var(--muted); font-size: 15px; }
-  .status.on { color: var(--live); font-weight: 600; }
-  .timer { font-size: 30px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .now { display: grid; gap: 12px; }
+  .now label { margin-bottom: 0; }
+  .now-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .now-head .muted { font-size: 14px; }
+  .preview { text-align: center; font-size: 15px; color: var(--muted); min-height: 21px; }
+  .preview strong { color: var(--text); font-size: 20px; font-variant-numeric: tabular-nums; }
   .big { border: 0; border-radius: 14px; padding: 16px; font-size: 18px; font-weight: 600;
          background: var(--accent); color: var(--on-accent); }
   .big.stop { background: var(--stop); }
@@ -117,15 +119,23 @@
   </section>
 
   <section class="card now">
-    <div class="status" id="status"></div>
-    <div class="timer" id="timer"></div>
-    <button class="big" id="toggle"></button>
+    <div class="now-head">
+      <h2>Dodaj godziny</h2>
+      <span class="muted" id="todayInfo"></span>
+    </div>
+    <label>Data <input type="date" id="qDate"></label>
+    <div class="two">
+      <label>Start <input type="time" id="qStart"></label>
+      <label>Koniec <input type="time" id="qEnd"></label>
+    </div>
+    <label>Przerwa (minuty) <input type="number" id="qBreak" min="0" step="5" inputmode="numeric"></label>
+    <div class="preview" id="qPreview"></div>
+    <button class="big" id="qAdd">Dodaj wpis</button>
   </section>
 
   <section>
     <div class="row-head">
       <h2>Wpisy</h2>
-      <button class="link" id="add">+ Dodaj ręcznie</button>
     </div>
     <ul id="list"></ul>
   </section>
@@ -349,32 +359,61 @@ $("setHours").onclick = () => {
 }
 
 function renderStatus() {
-  const open = openEntry()
-  const btn = $("toggle"), st = $("status")
-  if (open) {
-    st.textContent = `● W pracy od ${hhmm(new Date(open.start))}`
-    st.className = "status on"
-    $("timer").textContent = fmtElapsed(Date.now() - new Date(open.start))
-    btn.textContent = "Zakończ pracę"
-    btn.classList.add("stop")
-  } else {
-    const today = new Date()
-    const t = data.filter(e => isoDate(new Date(e.start)) === isoDate(today)).reduce((s, e) => s + entryHours(e), 0)
-    st.textContent = "Poza pracą"
-    st.className = "status"
-    $("timer").textContent = `Dziś: ${fmtHours(t)} h`
-    btn.textContent = "Rozpocznij pracę"
-    btn.classList.remove("stop")
-  }
+  const today = isoDate(new Date())
+  const t = data.filter(e => isoDate(new Date(e.start)) === today).reduce((s, e) => s + entryHours(e), 0)
+  $("todayInfo").textContent = `Dziś: ${fmtHours(t)} h`
 }
 
-// ---------- Start / stop ----------
-$("toggle").onclick = () => {
-  const open = openEntry()
-  if (open) open.end = new Date().toISOString()
-  else data.push({ start: new Date().toISOString(), end: null, breakMin: 0 })
-  view = monthStart(new Date())
+// ---------- Szybkie dodawanie ----------
+function buildEntry(date, st, en, br) {
+  if (!date || !st || !en) return null
+  const start = makeDate(date, st), end = makeDate(date, en)
+  if (isNaN(start) || isNaN(end)) return null
+  if (end <= start) end.setDate(end.getDate() + 1) // zmiana nocna
+  return { start: start.toISOString(), end: end.toISOString(), breakMin: Math.max(0, parseInt(br) || 0) }
+}
+
+function quickEntry() {
+  return buildEntry($("qDate").value, $("qStart").value, $("qEnd").value, $("qBreak").value)
+}
+
+function updatePreview() {
+  const e = quickEntry()
+  const p = $("qPreview")
+  if (!e) { p.textContent = ""; return }
+  const night = new Date(e.end).getDate() !== new Date(e.start).getDate()
+  p.innerHTML = `Razem: <strong>${fmtHours(entryHours(e))} h</strong>` + (night ? " · zmiana nocna" : "")
+}
+
+function initQuickForm() {
+  $("qDate").value = isoDate(new Date())
+  $("qStart").value = settings.lastStart || "08:00"
+  $("qEnd").value = settings.lastEnd || "16:00"
+  $("qBreak").value = settings.lastBreak ?? 0
+  updatePreview()
+}
+
+for (const id of ["qDate", "qStart", "qEnd", "qBreak"]) $(id).addEventListener("input", updatePreview)
+
+$("qAdd").onclick = () => {
+  const e = quickEntry()
+  if (!e) return alert("Uzupełnij datę oraz godzinę rozpoczęcia i zakończenia.")
+  const day = $("qDate").value
+  const same = data.filter(x => isoDate(new Date(x.start)) === day)
+  if (same.length) {
+    const txt = same.map(x => `${hhmm(new Date(x.start))}–${x.end ? hhmm(new Date(x.end)) : "?"}`).join(", ")
+    if (!confirm(`Ten dzień ma już wpis (${txt}). Dodać kolejny?`)) return
+  }
+  data.push(e)
+  settings.lastStart = $("qStart").value
+  settings.lastEnd = $("qEnd").value
+  settings.lastBreak = parseInt($("qBreak").value) || 0
+  saveSettings()
+  view = monthStart(new Date(e.start))
   save()
+  const b = $("qAdd")
+  b.textContent = "Dodano ✓"
+  setTimeout(() => { b.textContent = "Dodaj wpis" }, 1200)
 }
 
 $("prev").onclick = () => { view = new Date(view.getFullYear(), view.getMonth() - 1, 1); render() }
@@ -395,7 +434,6 @@ function openDialog(e) {
   $("dlg").showModal()
 }
 
-$("add").onclick = () => openDialog(null)
 $("cancel").onclick = () => $("dlg").close()
 
 $("saveBtn").onclick = () => {
@@ -474,18 +512,13 @@ $("exportCsv").onclick = () => {
 }
 
 // ---------- Odświeżanie i offline ----------
-let tick = 0
-setInterval(() => {
-  if (!openEntry()) return
-  renderStatus()
-  if (++tick % 60 === 0) render()
-}, 1000)
 document.addEventListener("visibilitychange", () => { if (!document.hidden) render() })
 
 if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
   navigator.serviceWorker.register("sw.js").catch(() => {})
 }
 
+initQuickForm()
 render()
 </script>
 </body>
