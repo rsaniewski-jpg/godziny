@@ -1,5 +1,5 @@
 // Prosty service worker: najpierw sieć, w razie braku internetu – kopia z pamięci.
-const CACHE = "godziny-v4"
+const CACHE = "godziny-v5"
 const FILES = ["./", "./index.html", "./manifest.json", "./icon-180.png", "./icon-192.png", "./icon-512.png"]
 
 self.addEventListener("install", e => {
