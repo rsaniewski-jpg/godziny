@@ -599,22 +599,45 @@ function flashAdded() {
   setTimeout(() => { b.textContent = addLabel() }, 1200)
 }
 
+// ---------- Zasady: jeden dzień = praca ALBO urlop ALBO L4 ----------
+const dayKey = e => isoDate(new Date(e.start))
+const entriesOn = (key, except) => data.filter(x => x !== except && dayKey(x) === key)
+const fmtDay = key => { const [y, m, d] = key.split("-"); return `${d}.${m}` }
+const rangeTxt = x => `${hhmm(new Date(x.start))}–${x.end ? hhmm(new Date(x.end)) : "?"}`
+function overlapping(e, except) {          // nachodzące godziny pracy (także zmiany nocne)
+  const s = new Date(e.start).getTime(), en = new Date(e.end || Date.now()).getTime()
+  return data.find(x => x !== except && !isAbs(x) &&
+    new Date(x.start).getTime() < en && new Date(x.end || Date.now()).getTime() > s)
+}
+const nDays = n => n === 1 ? "1 dzień" : `${n} dni`
+
 function addVacation() {
   const days = vacationDays(), h = vacHours()
   if (!days || !days.length) return alert("Wybierz okres, w którym są dni robocze.")
   if (!(h > 0 && h <= 24)) return alert("Podaj liczbę godzin na dzień (np. 8).")
   const type = mode
-  let added = 0, skipped = 0
+  const toAdd = [], withWork = [], same = [], other = [], replace = []
   for (const d of days) {
-    const key = isoDate(d)
-    if (data.some(x => isAbs(x) && isoDate(new Date(x.start)) === key)) { skipped++; continue }
-    data.push(absEntry(d, h, type))
-    added++
+    const on = entriesOn(isoDate(d))
+    const ex = on.find(isAbs)
+    if (on.some(x => !isAbs(x))) withWork.push(d)
+    else if (ex && ex.type === type) same.push(d)
+    else if (ex && type === "l4" && ex.type === "urlop") replace.push([d, ex])
+    else if (ex) other.push(d)
+    else toAdd.push(d)
   }
-  view = monthStart(days[0])
-  save()
-  flashAdded()
-  if (skipped) alert(`Dodano ${added} ${daysLabel(added)} ${ABS[type].gen}. Pominięto ${skipped === 1 ? "1 dzień, który miał" : skipped + " dni, które miały"} już wpisany urlop lub L4.`)
+  if (replace.length && confirm(`${nDays(replace.length)} w tym okresie ma wpisany urlop. Zastąpić go L4?\n(Choroba w trakcie urlopu przerywa urlop — niewykorzystane dni urlopu zostają do wykorzystania później.)`)) {
+    for (const [d, ex] of replace) { data.splice(data.indexOf(ex), 1); toAdd.push(d) }
+    replace.length = 0
+  }
+  for (const d of toAdd) data.push(absEntry(d, h, type))
+
+  const notes = []
+  if (withWork.length) notes.push(`${nDays(withWork.length)} z godzinami pracy (${withWork.map(d => fmtDay(isoDate(d))).join(", ")})`)
+  if (same.length) notes.push(`${nDays(same.length)} z już wpisanym ${ABS[type].label === "L4" ? "L4" : "urlopem"}`)
+  if (other.length || replace.length) notes.push(`${nDays(other.length + replace.length)} z wpisanym ${type === "l4" ? "urlopem" : "L4"}`)
+  if (toAdd.length) { view = monthStart(toAdd[0]); save(); flashAdded() }
+  if (notes.length) alert(`${toAdd.length ? `Dodano ${nDays(toAdd.length)} ${ABS[type].gen}.` : "Nic nie dodano."}\nPominięto: ${notes.join("; ")}.\n\nW jednym dniu może być tylko praca, urlop albo L4.`)
 }
 
 $("qAdd").onclick = () => {
@@ -622,10 +645,15 @@ $("qAdd").onclick = () => {
   const e = quickEntry()
   if (!e) return alert("Uzupełnij datę oraz godzinę rozpoczęcia i zakończenia.")
   const day = $("qDate").value
-  const same = data.filter(x => isoDate(new Date(x.start)) === day)
-  if (same.length) {
-    const txt = same.map(x => isAbs(x) ? ABS[x.type].label : `${hhmm(new Date(x.start))}–${x.end ? hhmm(new Date(x.end)) : "?"}`).join(", ")
-    if (!confirm(`Ten dzień ma już wpis (${txt}). Dodać kolejny?`)) return
+  const on = entriesOn(day)
+  const abs = on.find(isAbs)
+  const clash = overlapping(e)
+  if (clash) return alert(`Te godziny nachodzą na wpis ${fmtDay(dayKey(clash))} ${rangeTxt(clash)}. Popraw godziny albo edytuj tamten wpis.`)
+  if (abs) {
+    if (!confirm(`${fmtDay(day)} masz wpisany ${ABS[abs.type].label}. Zastąpić go godzinami pracy?\n(np. odwołanie z urlopu)`)) return
+    data.splice(data.indexOf(abs), 1)
+  } else if (on.length) {
+    if (!confirm(`${fmtDay(day)} masz już wpis ${on.map(rangeTxt).join(", ")}. Dodać kolejny (np. praca dzielona)?`)) return
   }
   data.push(e)
   settings.lastStart = $("qStart").value
@@ -707,6 +735,8 @@ $("saveBtn").onclick = () => {
   if (editing && isAbs(editing)) {
     const date = $("fDate").value, h = parseFloat(String($("fHours").value).replace(",", ".")) || 0
     if (!date || !(h > 0 && h <= 24)) return alert("Podaj datę i liczbę godzin.")
+    const on = entriesOn(date, editing)
+    if (on.length) return alert(`${fmtDay(date)} ma już inny wpis (${on.map(x => isAbs(x) ? ABS[x.type].label : rangeTxt(x)).join(", ")}). W jednym dniu może być tylko praca, urlop albo L4.`)
     Object.assign(editing, absEntry(makeDate(date, "00:00"), h, editing.type))
     view = monthStart(makeDate(date, "00:00"))
     $("dlg").close()
@@ -727,6 +757,10 @@ $("saveBtn").onclick = () => {
     end: end ? end.toISOString() : null,
     breakMin: Math.max(0, parseInt($("fBreak").value) || 0)
   }
+  const absOn = entriesOn(date, editing).find(isAbs)
+  if (absOn) return alert(`${fmtDay(date)} masz wpisany ${ABS[absOn.type].label}. Usuń go najpierw albo wybierz inny dzień.`)
+  const clash = overlapping(entry, editing)
+  if (clash) return alert(`Te godziny nachodzą na wpis ${fmtDay(dayKey(clash))} ${rangeTxt(clash)}.`)
   if (editing) Object.assign(editing, entry)
   else data.push(entry)
   view = monthStart(start)
