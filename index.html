@@ -42,6 +42,15 @@
   .sub { font-size: 14px; color: var(--muted); }
 
   .card { background: var(--card); border-radius: 18px; padding: 18px; }
+  .norm { display: grid; gap: 10px; }
+  .norm-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .norm .link { padding: 0; }
+  .bar { height: 8px; border-radius: 4px; background: var(--field); overflow: hidden; }
+  .bar-fill { height: 100%; width: 0; background: var(--accent); border-radius: 4px; transition: width .3s; }
+  .bar-fill.done { background: var(--live); }
+  .over { color: var(--live); font-weight: 600; }
+  .holidays { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 10px; }
+  .holidays:empty { display: none; }
   .now { display: grid; gap: 12px; text-align: center; }
   .status { color: var(--muted); font-size: 15px; }
   .status.on { color: var(--live); font-weight: 600; }
@@ -93,6 +102,19 @@
     </div>
     <button id="next" aria-label="Następny miesiąc">›</button>
   </header>
+
+  <section class="card norm">
+    <div class="norm-row">
+      <span>Wymiar: <strong id="normText"></strong></span>
+      <button class="link" id="setHours"></button>
+    </div>
+    <div class="bar"><div class="bar-fill" id="barFill"></div></div>
+    <div class="norm-row sub">
+      <span id="normLeft"></span>
+      <span id="daysLeft"></span>
+    </div>
+    <div class="holidays" id="holidays"></div>
+  </section>
 
   <section class="card now">
     <div class="status" id="status"></div>
@@ -187,6 +209,66 @@ function makeDate(dateStr, timeStr) {
 }
 const daysLabel = n => n === 1 ? "dzień" : "dni"
 
+// ---------- Ustawienia ----------
+const SKEY = KEY + "-settings"
+let settings = { hoursPerDay: 8 }
+try { Object.assign(settings, JSON.parse(localStorage.getItem(SKEY)) || {}) } catch {}
+function saveSettings() { try { localStorage.setItem(SKEY, JSON.stringify(settings)) } catch {} }
+
+// ---------- Święta w Polsce ----------
+function easter(y) { // algorytm Gaussa / Meeusa
+  const a = y % 19, b = Math.floor(y / 100), c = y % 100, d = Math.floor(b / 4), e = b % 4
+  const f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3)
+  const h = (19 * a + b - d - g + 15) % 30, i = Math.floor(c / 4), k = c % 4
+  const l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451)
+  const month = Math.floor((h + l - 7 * m + 114) / 31), day = ((h + l - 7 * m + 114) % 31) + 1
+  return new Date(y, month - 1, day)
+}
+const holidayCache = {}
+function holidays(y) {
+  if (holidayCache[y]) return holidayCache[y]
+  const e = easter(y)
+  const plus = n => new Date(e.getFullYear(), e.getMonth(), e.getDate() + n)
+  const list = [
+    [new Date(y, 0, 1), "Nowy Rok"],
+    [new Date(y, 0, 6), "Trzech Króli"],
+    [e, "Wielkanoc"],
+    [plus(1), "Poniedziałek Wielkanocny"],
+    [new Date(y, 4, 1), "Święto Pracy"],
+    [new Date(y, 4, 3), "Święto Konstytucji 3 Maja"],
+    [plus(49), "Zielone Świątki"],
+    [plus(60), "Boże Ciało"],
+    [new Date(y, 7, 15), "Wniebowzięcie NMP"],
+    [new Date(y, 10, 1), "Wszystkich Świętych"],
+    [new Date(y, 10, 11), "Święto Niepodległości"],
+    [new Date(y, 11, 25), "Boże Narodzenie"],
+    [new Date(y, 11, 26), "Drugi dzień Bożego Narodzenia"]
+  ]
+  if (y >= 2025) list.push([new Date(y, 11, 24), "Wigilia"])
+  return (holidayCache[y] = new Map(list.map(([d, n]) => [isoDate(d), n])))
+}
+
+// Wymiar czasu pracy: dni Pn–Pt bez świąt, minus 1 dzień za każde święto w sobotę (art. 130 § 2 KP)
+function monthNorm(y, m) {
+  const hol = holidays(y)
+  const today = isoDate(new Date())
+  let workDays = 0, satHolidays = 0, leftDays = 0
+  const list = []
+  const last = new Date(y, m + 1, 0).getDate()
+  for (let d = 1; d <= last; d++) {
+    const date = new Date(y, m, d), key = isoDate(date), wd = date.getDay()
+    const name = hol.get(key)
+    if (name) list.push({ d, wd, name })
+    if (name && wd === 6) satHolidays++
+    if (wd >= 1 && wd <= 5 && !name) {
+      workDays++
+      if (key >= today) leftDays++
+    }
+  }
+  const normDays = workDays - satHolidays
+  return { normDays, workDays, satHolidays, leftDays, holidays: list, normHours: normDays * settings.hoursPerDay }
+}
+
 // ---------- Widok ----------
 function render() {
   const y = view.getFullYear(), m = view.getMonth()
@@ -201,7 +283,9 @@ function render() {
 
   $("monthName").textContent = `${MONTHS[m]} ${y}`
   $("total").textContent = `${fmtHours(total)} h`
-  $("days").textContent = `${byDay.size} ${daysLabel(byDay.size)} pracy`
+  const norm = monthNorm(y, m)
+  $("days").textContent = `${byDay.size} z ${norm.normDays} dni roboczych`
+  renderNorm(norm, total)
 
   const list = $("list")
   list.innerHTML = ""
@@ -228,6 +312,40 @@ function render() {
     list.appendChild(li)
   }
   renderStatus()
+}
+
+function renderNorm(norm, total) {
+  $("normText").textContent = `${norm.normDays} ${daysLabel(norm.normDays)} · ${fmtHours(norm.normHours)} h`
+  $("setHours").textContent = `${String(settings.hoursPerDay).replace(".", ",")} h/dzień ✎`
+  const pct = norm.normHours ? Math.min(100, total / norm.normHours * 100) : 0
+  $("barFill").style.width = pct + "%"
+  $("barFill").classList.toggle("done", total >= norm.normHours && norm.normHours > 0)
+
+  const diff = total - norm.normHours
+  const left = $("normLeft")
+  if (diff >= 0 && norm.normHours > 0) {
+    left.textContent = diff > 0 ? `Nadgodziny: +${fmtHours(diff)} h` : "Wymiar wyrobiony ✓"
+    left.className = "over"
+  } else {
+    left.textContent = `Brakuje: ${fmtHours(-diff)} h`
+    left.className = ""
+  }
+  $("daysLeft").textContent = norm.leftDays ? `Zostało ${norm.leftDays} ${daysLabel(norm.leftDays)} roboczych` : ""
+
+  const parts = norm.holidays.map(h => `${pad(h.d)}.${pad(view.getMonth() + 1)} (${DAYS[h.wd]}) ${h.name}`)
+  let txt = parts.length ? "Święta: " + parts.join(" · ") : ""
+  if (norm.satHolidays) txt += ` — święto w sobotę obniża wymiar o ${norm.satHolidays * settings.hoursPerDay} h (pracodawca wyznacza inny dzień wolny)`
+  $("holidays").textContent = txt
+}
+
+$("setHours").onclick = () => {
+  const v = prompt("Ile godzin dziennie wynosi Twój etat? (np. 8, 7, 4)", String(settings.hoursPerDay))
+  if (v === null) return
+  const n = parseFloat(v.replace(",", "."))
+  if (!(n > 0 && n <= 24)) return alert("Podaj liczbę od 1 do 24.")
+  settings.hoursPerDay = n
+  saveSettings()
+  render()
 }
 
 function renderStatus() {
