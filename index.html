@@ -36,9 +36,15 @@
   button { font: inherit; color: inherit; cursor: pointer; }
   .muted { color: var(--muted); font-weight: 400; }
 
-  .month { display: grid; grid-template-columns: 44px 1fr 44px; align-items: center; text-align: center; }
-  .month button { width: 44px; height: 44px; border-radius: 50%; border: 0; background: var(--card); font-size: 24px; line-height: 1; }
-  .month-name { font-size: 14px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .top { display: grid; gap: 6px; text-align: center; }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  .msel { position: relative; }
+  .msel select { width: 100%; font: inherit; font-weight: 600; color: var(--text); background: var(--card);
+                 border: 1px solid var(--line); border-radius: 14px; padding: 12px 40px 12px 16px; min-height: 48px;
+                 -webkit-appearance: none; appearance: none; text-align: center; text-align-last: center; }
+  .msel::after { content: "▾"; position: absolute; right: 16px; top: 50%; transform: translateY(-50%);
+                 color: var(--muted); pointer-events: none; font-size: 18px; }
+  .top .total { margin-top: 8px; }
   .total { font-size: 44px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; margin: 2px 0; }
   .sub { font-size: 14px; color: var(--muted); }
 
@@ -105,14 +111,13 @@
 </head>
 <body>
 <main>
-  <header class="month">
-    <button id="prev" aria-label="Poprzedni miesiąc">‹</button>
-    <div>
-      <div class="month-name" id="monthName"></div>
-      <div class="total" id="total"></div>
-      <div class="sub" id="days"></div>
+  <header class="top">
+    <h1>Moje godziny pracy</h1>
+    <div class="msel">
+      <select id="monthSel" aria-label="Wybierz miesiąc"></select>
     </div>
-    <button id="next" aria-label="Następny miesiąc">›</button>
+    <div class="total" id="total"></div>
+    <div class="sub" id="days"></div>
   </header>
 
   <section class="card norm">
@@ -343,7 +348,7 @@ function render() {
   }
   const total = entries.reduce((s, e) => s + entryHours(e), 0)
 
-  $("monthName").textContent = `${MONTHS[m]} ${y}`
+  renderMonthSel()
   $("total").textContent = `${fmtHours(total)} h`
   const norm = monthNorm(y, m)
   $("days").textContent = `${byDay.size} z ${norm.normDays} dni roboczych`
@@ -489,8 +494,30 @@ $("qAdd").onclick = () => {
   setTimeout(() => { b.textContent = "Dodaj wpis" }, 1200)
 }
 
-$("prev").onclick = () => { view = new Date(view.getFullYear(), view.getMonth() - 1, 1); render() }
-$("next").onclick = () => { view = new Date(view.getFullYear(), view.getMonth() + 1, 1); render() }
+// ---------- Lista miesięcy ----------
+function monthHours(y, m) { return data.filter(e => inMonth(e, y, m)).reduce((s, e) => s + entryHours(e), 0) }
+const monthIdx = d => d.getFullYear() * 12 + d.getMonth()
+
+function renderMonthSel() {
+  const now = new Date()
+  const idx = data.map(e => monthIdx(new Date(e.start)))
+  let from = Math.min(monthIdx(now) - 11, monthIdx(view), ...idx)   // co najmniej ostatnie 12 miesięcy
+  let to = Math.max(monthIdx(now) + 1, monthIdx(view), ...idx)       // plus następny miesiąc
+  const sel = $("monthSel")
+  sel.innerHTML = ""
+  for (let i = to; i >= from; i--) {
+    const y = Math.floor(i / 12), m = i % 12
+    const label = `${MONTHS[m]} ${y} (${fmtHours(monthHours(y, m))} h)` + (i === monthIdx(now) ? " · bieżący" : "")
+    sel.add(new Option(label, String(i)))
+  }
+  sel.value = String(monthIdx(view))
+}
+
+$("monthSel").onchange = ev => {
+  const i = parseInt(ev.target.value)
+  view = new Date(Math.floor(i / 12), i % 12, 1)
+  render()
+}
 
 // ---------- Dodawanie / edycja ----------
 let editing = null
