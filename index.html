@@ -406,22 +406,28 @@ function render() {
     if (!byDay.has(d)) byDay.set(d, [])
     byDay.get(d).push(e)
   }
-  const total = entries.reduce((s, e) => s + entryHours(e), 0)
-
-  renderMonthSel()
-  if (typeof renderBackupInfo === "function") renderBackupInfo()
-  $("total").textContent = `${fmtHours(total)} h`
+  // Przepracowane = tylko praca. Urlop i L4 obniżają wymiar (art. 130 § 3 KP).
+  const workEntries = entries.filter(e => !isAbs(e))
+  const work = workEntries.reduce((s, e) => s + entryHours(e), 0)
   const hOf = t => entries.filter(e => e.type === t).reduce((s, e) => s + entryHours(e), 0)
   const absParts = Object.keys(ABS).map(t => [t, hOf(t)]).filter(([, h]) => h > 0)
   const absTotal = absParts.reduce((s, [, h]) => s + h, 0)
-  $("split").textContent = absParts.length
-    ? [`Praca ${fmtHours(total - absTotal)} h`, ...absParts.map(([t, h]) => `${ABS[t].label} ${fmtHours(h)} h`)].join(" · ")
-    : ""
-  const paidHours = total - absParts.filter(([t]) => !ABS[t].paid).reduce((s, [, h]) => s + h, 0)
+  const absDays = new Set(entries.filter(isAbs).map(dayKey)).size
+  const workDays = new Set(workEntries.map(dayKey)).size
   const norm = monthNorm(y, m)
-  $("days").textContent = `z ${fmtHours(norm.normHours)} h · ${byDay.size} z ${norm.normDays} dni`
-  $("heroMonth").textContent = `${MONTHS[m]} ${y}`
-  renderNorm(norm, total, paidHours)
+  const effNorm = Math.max(0, norm.normHours - absTotal)
+  const effDays = Math.max(0, norm.normDays - absDays)
+  const paidHours = work + absParts.filter(([t]) => ABS[t].paid).reduce((s, [, h]) => s + h, 0)
+
+  renderMonthSel()
+  if (typeof renderBackupInfo === "function") renderBackupInfo()
+  $("heroMonth").textContent = `${MONTHS[m]} ${y} · przepracowane`
+  $("total").textContent = `${fmtHours(work)} h`
+  $("days").textContent = `z ${fmtHours(effNorm)} h do przepracowania · ${workDays} z ${effDays} dni`
+  $("split").textContent = absParts.length
+    ? `Wymiar ${fmtHours(norm.normHours)} h − ` + absParts.map(([t, h]) => `${ABS[t].label} ${fmtHours(h)} h`).join(" − ") + ` = ${fmtHours(effNorm)} h`
+    : ""
+  renderNorm(norm, work, effNorm, paidHours, absParts)
 
   const list = $("list")
   list.innerHTML = ""
@@ -451,16 +457,19 @@ function render() {
   renderStatus()
 }
 
-function renderNorm(norm, total, paidHours = total) {
+function renderNorm(norm, total, effNorm, paidHours, absParts) {
   $("normText").textContent = `${norm.normDays} ${daysLabel(norm.normDays)} · ${fmtHours(norm.normHours)} h`
   $("setHours").textContent = `${String(settings.hoursPerDay).replace(".", ",")} h/dzień ✎`
-  const pct = norm.normHours ? Math.min(100, total / norm.normHours * 100) : 0
+  const pct = effNorm ? Math.min(100, total / effNorm * 100) : (total > 0 ? 100 : 0)
   $("barFill").style.width = pct + "%"
-  $("barFill").classList.toggle("done", total >= norm.normHours && norm.normHours > 0)
+  $("barFill").classList.toggle("done", total >= effNorm && (effNorm > 0 || total > 0))
 
-  const diff = total - norm.normHours
+  const diff = total - effNorm
   const left = $("normLeft")
-  if (diff >= 0 && norm.normHours > 0) {
+  if (effNorm === 0 && norm.normHours > 0 && total === 0) {
+    left.textContent = "Cały miesiąc nieobecności"
+    left.className = ""
+  } else if (diff >= 0 && norm.normHours > 0) {
     left.textContent = diff > 0 ? `Nadgodziny: +${fmtHours(diff)} h` : "Wymiar wyrobiony ✓"
     left.className = "over"
   } else {
@@ -476,7 +485,10 @@ function renderNorm(norm, total, paidHours = total) {
 
   const rate = settings.rate || 0
   $("setRate").textContent = rate ? `${money(rate)}/h ✎` : "Ustaw stawkę ✎"
-  $("payText").textContent = rate ? money(paidHours * rate) + (paidHours < total ? " (bez L4)" : "") : "—"
+  const hasL4 = absParts.some(([t]) => !ABS[t].paid), hasUrlop = absParts.some(([t]) => ABS[t].paid)
+  $("payText").textContent = rate
+    ? money(paidHours * rate) + (hasUrlop || hasL4 ? ` (praca${hasUrlop ? " + urlop" : ""}${hasL4 ? ", bez L4" : ""})` : "")
+    : "—"
   $("payNorm").textContent = rate && norm.normHours
     ? `Za pełny wymiar (${fmtHours(norm.normHours)} h): ${money(norm.normHours * rate)}`
     : ""
@@ -508,8 +520,11 @@ $("setHours").onclick = () => {
 
 function renderStatus() {
   const today = isoDate(new Date())
-  const t = data.filter(e => isoDate(new Date(e.start)) === today).reduce((s, e) => s + entryHours(e), 0)
-  $("todayInfo").textContent = `Dziś: ${fmtHours(t)} h`
+  const on = data.filter(e => isoDate(new Date(e.start)) === today)
+  const abs = on.find(isAbs)
+  $("todayInfo").textContent = abs
+    ? `Dziś: ${ABS[abs.type].label}`
+    : `Dziś: ${fmtHours(on.reduce((s, e) => s + entryHours(e), 0))} h`
 }
 
 // ---------- Szybkie dodawanie ----------
@@ -666,7 +681,7 @@ $("qAdd").onclick = () => {
 }
 
 // ---------- Lista miesięcy ----------
-function monthHours(y, m) { return data.filter(e => inMonth(e, y, m)).reduce((s, e) => s + entryHours(e), 0) }
+function monthHours(y, m) { return data.filter(e => !isAbs(e) && inMonth(e, y, m)).reduce((s, e) => s + entryHours(e), 0) }
 const monthIdx = d => d.getFullYear() * 12 + d.getMonth()
 
 function renderMonthSel() {
@@ -888,9 +903,17 @@ $("exportCsv").onclick = () => {
     rows.push([isoDate(s), v ? ABS[e.type].label : "Praca", v ? "" : hhmm(s), v || !e.end ? "" : hhmm(new Date(e.end)), v ? "" : e.breakMin, decimal(entryHours(e))]
       .concat(rate ? [paid ? decimal(entryHours(e) * rate) : ""] : []))
   }
-  const sumH = entries.reduce((s, e) => s + entryHours(e), 0)
-  const paidH = entries.filter(e => !isAbs(e) || ABS[e.type].paid).reduce((s, e) => s + entryHours(e), 0)
-  rows.push(["", "", "", "", "Suma", decimal(sumH)].concat(rate ? [decimal(paidH * rate)] : []))
+  const hSum = f => entries.filter(f).reduce((s, e) => s + entryHours(e), 0)
+  const workH = hSum(e => !isAbs(e))
+  const paidH = hSum(e => !isAbs(e) || ABS[e.type].paid)
+  const absH = hSum(isAbs)
+  const nrm = monthNorm(y, m).normHours
+  rows.push([])
+  rows.push(["", "", "", "", "Przepracowane", decimal(workH)])
+  for (const t of Object.keys(ABS)) { const h = hSum(e => e.type === t); if (h) rows.push(["", "", "", "", ABS[t].label, decimal(h)]) }
+  rows.push(["", "", "", "", "Wymiar", decimal(nrm)])
+  if (absH) rows.push(["", "", "", "", "Wymiar po obniżeniu", decimal(Math.max(0, nrm - absH))])
+  if (rate) rows.push(["", "", "", "", "Do wypłaty (praca + urlop)", "", decimal(paidH * rate)])
   if (rate) rows.push(["", "", "", "", "Stawka (zł/h)", "", decimal(rate)])
   const csv = "﻿" + rows.map(r => r.join(";")).join("\r\n")
   shareFile(`godziny-${y}-${pad(m + 1)}.csv`, csv, "text/csv")
