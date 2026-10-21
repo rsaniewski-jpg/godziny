@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111318">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Godziny">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>Godziny pracy</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #ffffff; --text: #15171c; --muted: #6b7080;
+    --line: #e3e5ea; --accent: #2f6fed; --on-accent: #ffffff;
+    --stop: #d9453b; --live: #1f9d55; --field: #f4f5f7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111318; --card: #1b1e25; --text: #eef0f4; --muted: #9097a6;
+      --line: #2a2e37; --accent: #4c86ff; --on-accent: #ffffff;
+      --stop: #ef5a50; --live: #3ccf7a; --field: #23262f;
+    }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body {
+    font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: max(16px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+  }
+  main { max-width: 520px; margin: 0 auto; display: grid; gap: 16px; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  .muted { color: var(--muted); font-weight: 400; }
+
+  .month { display: grid; grid-template-columns: 44px 1fr 44px; align-items: center; text-align: center; }
+  .month button { width: 44px; height: 44px; border-radius: 50%; border: 0; background: var(--card); font-size: 24px; line-height: 1; }
+  .month-name { font-size: 14px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .total { font-size: 44px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; margin: 2px 0; }
+  .sub { font-size: 14px; color: var(--muted); }
+
+  .card { background: var(--card); border-radius: 18px; padding: 18px; }
+  .now { display: grid; gap: 12px; text-align: center; }
+  .status { color: var(--muted); font-size: 15px; }
+  .status.on { color: var(--live); font-weight: 600; }
+  .timer { font-size: 30px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .big { border: 0; border-radius: 14px; padding: 16px; font-size: 18px; font-weight: 600;
+         background: var(--accent); color: var(--on-accent); }
+  .big.stop { background: var(--stop); }
+
+  .row-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+  h2 { font-size: 17px; margin: 0; }
+  .link { border: 0; background: none; color: var(--accent); font-weight: 600; padding: 8px 0; }
+
+  ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+  .day { background: var(--card); border-radius: 14px; overflow: hidden; }
+  .day-head { display: flex; justify-content: space-between; padding: 12px 14px 6px; font-weight: 600; }
+  .entry { display: flex; justify-content: space-between; gap: 8px; width: 100%; text-align: left;
+           border: 0; border-top: 1px solid var(--line); background: none; padding: 12px 14px;
+           font-variant-numeric: tabular-nums; }
+  .entry:first-of-type { border-top: 0; }
+  .live { color: var(--live); font-weight: 600; }
+  .empty { text-align: center; color: var(--muted); padding: 24px; background: var(--card); border-radius: 14px; }
+
+  .tools { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .tools button { border: 1px solid var(--line); background: var(--card); border-radius: 12px; padding: 10px 6px; font-size: 13px; }
+
+  dialog { border: 0; border-radius: 18px; padding: 20px; width: min(420px, calc(100vw - 32px));
+           background: var(--card); color: var(--text); }
+  dialog::backdrop { background: rgba(0,0,0,.45); }
+  dialog h3 { margin: 0 0 14px; }
+  label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+  input { font: inherit; color: var(--text); background: var(--field); border: 1px solid var(--line);
+          border-radius: 10px; padding: 10px 12px; width: 100%; min-height: 44px; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .actions { display: flex; gap: 8px; margin-top: 6px; }
+  .actions button { flex: 1; border: 0; border-radius: 12px; padding: 12px; font-weight: 600; background: var(--field); }
+  .actions .primary { background: var(--accent); color: var(--on-accent); }
+  .actions .danger { background: none; color: var(--stop); flex: 0 0 auto; }
+  .hint { font-size: 12px; color: var(--muted); margin: -6px 0 12px; }
+</style>
+</head>
+<body>
+<main>
+  <header class="month">
+    <button id="prev" aria-label="Poprzedni miesiąc">‹</button>
+    <div>
+      <div class="month-name" id="monthName"></div>
+      <div class="total" id="total"></div>
+      <div class="sub" id="days"></div>
+    </div>
+    <button id="next" aria-label="Następny miesiąc">›</button>
+  </header>
+
+  <section class="card now">
+    <div class="status" id="status"></div>
+    <div class="timer" id="timer"></div>
+    <button class="big" id="toggle"></button>
+  </section>
+
+  <section>
+    <div class="row-head">
+      <h2>Wpisy</h2>
+      <button class="link" id="add">+ Dodaj ręcznie</button>
+    </div>
+    <ul id="list"></ul>
+  </section>
+
+  <section class="tools">
+    <button id="exportJson">Backup</button>
+    <button id="importJson">Wczytaj backup</button>
+    <button id="exportCsv">Eksport CSV</button>
+    <input type="file" id="file" accept=".json,application/json,text/plain" hidden>
+  </section>
+</main>
+
+<dialog id="dlg">
+  <h3 id="dlgTitle">Nowy wpis</h3>
+  <label>Data <input type="date" id="fDate"></label>
+  <div class="two">
+    <label>Start <input type="time" id="fStart"></label>
+    <label>Koniec <input type="time" id="fEnd"></label>
+  </div>
+  <div class="hint" id="endHint"></div>
+  <label>Przerwa (minuty) <input type="number" id="fBreak" min="0" step="5" inputmode="numeric"></label>
+  <div class="actions">
+    <button class="danger" id="del">Usuń</button>
+    <button id="cancel">Anuluj</button>
+    <button class="primary" id="saveBtn">Zapisz</button>
+  </div>
+</dialog>
+
+<script>
+const KEY = "godziny-pracy-v1"
+const MONTHS = ["Styczeń","Luty","Marzec","Kwiecień","Maj","Czerwiec","Lipiec","Sierpień","Wrzesień","Październik","Listopad","Grudzień"]
+const DAYS = ["nd","pn","wt","śr","cz","pt","sb"]
+const $ = id => document.getElementById(id)
+
+// ---------- Dane ----------
+function normalize(arr) {
+  if (!Array.isArray(arr)) throw new Error("not array")
+  return arr
+    .filter(e => e && !isNaN(new Date(e.start)))
+    .map(e => ({
+      start: new Date(e.start).toISOString(),
+      end: e.end && !isNaN(new Date(e.end)) ? new Date(e.end).toISOString() : null,
+      breakMin: Math.max(0, parseInt(e.breakMin) || 0)
+    }))
+}
+
+function load() {
+  try { return normalize(JSON.parse(localStorage.getItem(KEY)) || []) } catch { return [] }
+}
+
+let data = load()
+let view = monthStart(new Date())
+
+function save() {
+  data.sort((a, b) => new Date(a.start) - new Date(b.start))
+  try { localStorage.setItem(KEY, JSON.stringify(data)) }
+  catch { alert("Nie udało się zapisać danych na tym urządzeniu.") }
+  try { navigator.storage && navigator.storage.persist && navigator.storage.persist() } catch {}
+  render()
+}
+
+// ---------- Pomocnicze ----------
+const pad = n => String(n).padStart(2, "0")
+const hhmm = d => `${pad(d.getHours())}:${pad(d.getMinutes())}`
+const isoDate = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+const fmtHours = h => { const m = Math.round(h * 60); return `${Math.floor(m / 60)}:${pad(m % 60)}` }
+const fmtElapsed = ms => { const s = Math.max(0, Math.floor(ms / 1000)); return `${Math.floor(s / 3600)}:${pad(Math.floor(s / 60) % 60)}:${pad(s % 60)}` }
+const decimal = h => h.toFixed(2).replace(".", ",")
+function monthStart(d) { return new Date(d.getFullYear(), d.getMonth(), 1) }
+
+function entryHours(e) {
+  const end = e.end ? new Date(e.end) : new Date()
+  return Math.max(0, (end - new Date(e.start)) / 3600000 - (e.breakMin || 0) / 60)
+}
+const openEntry = () => data.find(e => !e.end)
+function inMonth(e, y, m) { const d = new Date(e.start); return d.getFullYear() === y && d.getMonth() === m }
+function makeDate(dateStr, timeStr) {
+  const [y, mo, d] = dateStr.split("-").map(Number)
+  const [h, mi] = timeStr.split(":").map(Number)
+  return new Date(y, mo - 1, d, h, mi || 0)
+}
+const daysLabel = n => n === 1 ? "dzień" : "dni"
+
+// ---------- Widok ----------
+function render() {
+  const y = view.getFullYear(), m = view.getMonth()
+  const entries = data.filter(e => inMonth(e, y, m))
+  const byDay = new Map()
+  for (const e of entries) {
+    const d = new Date(e.start).getDate()
+    if (!byDay.has(d)) byDay.set(d, [])
+    byDay.get(d).push(e)
+  }
+  const total = entries.reduce((s, e) => s + entryHours(e), 0)
+
+  $("monthName").textContent = `${MONTHS[m]} ${y}`
+  $("total").textContent = `${fmtHours(total)} h`
+  $("days").textContent = `${byDay.size} ${daysLabel(byDay.size)} pracy`
+
+  const list = $("list")
+  list.innerHTML = ""
+  if (!entries.length) {
+    list.innerHTML = '<li class="empty">Brak wpisów w tym miesiącu</li>'
+  }
+  for (const d of [...byDay.keys()].sort((a, b) => b - a)) {
+    const items = byDay.get(d)
+    const sum = items.reduce((s, e) => s + entryHours(e), 0)
+    const li = document.createElement("li")
+    li.className = "day"
+    li.innerHTML = `<div class="day-head"><span>${pad(d)}.${pad(m + 1)} <span class="muted">${DAYS[new Date(y, m, d).getDay()]}</span></span><span>${fmtHours(sum)} h</span></div>`
+    for (const e of items) {
+      const s = new Date(e.start)
+      const b = document.createElement("button")
+      b.className = "entry"
+      b.innerHTML =
+        `<span>${hhmm(s)} – ${e.end ? hhmm(new Date(e.end)) : '<span class="live">trwa</span>'}` +
+        (e.breakMin ? ` <span class="muted">· przerwa ${e.breakMin} min</span>` : "") +
+        `</span><span>${fmtHours(entryHours(e))}</span>`
+      b.onclick = () => openDialog(e)
+      li.appendChild(b)
+    }
+    list.appendChild(li)
+  }
+  renderStatus()
+}
+
+function renderStatus() {
+  const open = openEntry()
+  const btn = $("toggle"), st = $("status")
+  if (open) {
+    st.textContent = `● W pracy od ${hhmm(new Date(open.start))}`
+    st.className = "status on"
+    $("timer").textContent = fmtElapsed(Date.now() - new Date(open.start))
+    btn.textContent = "Zakończ pracę"
+    btn.classList.add("stop")
+  } else {
+    const today = new Date()
+    const t = data.filter(e => isoDate(new Date(e.start)) === isoDate(today)).reduce((s, e) => s + entryHours(e), 0)
+    st.textContent = "Poza pracą"
+    st.className = "status"
+    $("timer").textContent = `Dziś: ${fmtHours(t)} h`
+    btn.textContent = "Rozpocznij pracę"
+    btn.classList.remove("stop")
+  }
+}
+
+// ---------- Start / stop ----------
+$("toggle").onclick = () => {
+  const open = openEntry()
+  if (open) open.end = new Date().toISOString()
+  else data.push({ start: new Date().toISOString(), end: null, breakMin: 0 })
+  view = monthStart(new Date())
+  save()
+}
+
+$("prev").onclick = () => { view = new Date(view.getFullYear(), view.getMonth() - 1, 1); render() }
+$("next").onclick = () => { view = new Date(view.getFullYear(), view.getMonth() + 1, 1); render() }
+
+// ---------- Dodawanie / edycja ----------
+let editing = null
+function openDialog(e) {
+  editing = e || null
+  const s = e ? new Date(e.start) : new Date()
+  $("dlgTitle").textContent = e ? "Edytuj wpis" : "Nowy wpis"
+  $("fDate").value = isoDate(s)
+  $("fStart").value = e ? hhmm(s) : "08:00"
+  $("fEnd").value = e ? (e.end ? hhmm(new Date(e.end)) : "") : "16:00"
+  $("fBreak").value = e ? e.breakMin : 0
+  $("endHint").textContent = e && !e.end ? "Zostaw koniec pusty, jeśli praca dalej trwa." : "Koniec wcześniej niż start = zmiana nocna."
+  $("del").hidden = !e
+  $("dlg").showModal()
+}
+
+$("add").onclick = () => openDialog(null)
+$("cancel").onclick = () => $("dlg").close()
+
+$("saveBtn").onclick = () => {
+  const date = $("fDate").value, st = $("fStart").value, en = $("fEnd").value
+  if (!date || !st) return alert("Podaj datę i godzinę rozpoczęcia.")
+  const start = makeDate(date, st)
+  let end = null
+  if (en) {
+    end = makeDate(date, en)
+    if (end <= start) end.setDate(end.getDate() + 1)
+  } else if (!(editing && !editing.end)) {
+    return alert("Podaj godzinę zakończenia.")
+  }
+  const entry = {
+    start: start.toISOString(),
+    end: end ? end.toISOString() : null,
+    breakMin: Math.max(0, parseInt($("fBreak").value) || 0)
+  }
+  if (editing) Object.assign(editing, entry)
+  else data.push(entry)
+  view = monthStart(start)
+  $("dlg").close()
+  save()
+}
+
+$("del").onclick = () => {
+  if (!editing || !confirm("Usunąć ten wpis?")) return
+  data.splice(data.indexOf(editing), 1)
+  $("dlg").close()
+  save()
+}
+
+// ---------- Backup i eksport ----------
+async function shareFile(name, text, type) {
+  const file = new File([text], name, { type })
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: name }); return }
+    catch (e) { if (e.name === "AbortError") return }
+  }
+  const url = URL.createObjectURL(file)
+  const a = document.createElement("a")
+  a.href = url; a.download = name
+  document.body.appendChild(a); a.click(); a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 2000)
+}
+
+$("exportJson").onclick = () => {
+  shareFile(`godziny-pracy-${isoDate(new Date())}.json`, JSON.stringify(data, null, 2), "text/plain")
+}
+
+$("importJson").onclick = () => $("file").click()
+$("file").onchange = async ev => {
+  const f = ev.target.files[0]
+  ev.target.value = ""
+  if (!f) return
+  try {
+    const arr = normalize(JSON.parse(await f.text()))
+    if (!arr.length) throw new Error("empty")
+    if (confirm(`Wczytać ${arr.length} wpisów? Obecne dane zostaną zastąpione.`)) { data = arr; save() }
+  } catch {
+    alert("To nie jest poprawny plik backupu.")
+  }
+}
+
+$("exportCsv").onclick = () => {
+  const y = view.getFullYear(), m = view.getMonth()
+  const entries = data.filter(e => inMonth(e, y, m))
+  const rows = [["Data", "Start", "Koniec", "Przerwa (min)", "Godziny"]]
+  for (const e of entries) {
+    const s = new Date(e.start)
+    rows.push([isoDate(s), hhmm(s), e.end ? hhmm(new Date(e.end)) : "", e.breakMin, decimal(entryHours(e))])
+  }
+  rows.push(["", "", "", "Suma", decimal(entries.reduce((s, e) => s + entryHours(e), 0))])
+  const csv = "﻿" + rows.map(r => r.join(";")).join("\r\n")
+  shareFile(`godziny-${y}-${pad(m + 1)}.csv`, csv, "text/csv")
+}
+
+// ---------- Odświeżanie i offline ----------
+let tick = 0
+setInterval(() => {
+  if (!openEntry()) return
+  renderStatus()
+  if (++tick % 60 === 0) render()
+}, 1000)
+document.addEventListener("visibilitychange", () => { if (!document.hidden) render() })
+
+if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+  navigator.serviceWorker.register("sw.js").catch(() => {})
+}
+
+render()
+</script>
+</body>
+</html>
