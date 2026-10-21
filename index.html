@@ -636,12 +636,17 @@ function renderMonthSel() {
   }
   const sel = $("monthSel")
   sel.innerHTML = ""
-  // bieżący miesiąc i 11 kolejnych (oraz dalsze, jeśli mają wpisy)
-  const ahead = document.createElement("optgroup")
-  ahead.label = "Bieżący i kolejne"
-  const maxAhead = Math.max(cur + 11, ...used)
-  for (let i = cur; i <= maxAhead; i++) if (i <= cur + 11 || used.has(i)) ahead.appendChild(new Option(label(i), String(i)))
-  sel.appendChild(ahead)
+  // bieżący miesiąc; następny pojawia się na 3 dni przed końcem bieżącego
+  // (dalsze miesiące tylko wtedy, gdy mają już wpisy, np. zaplanowany urlop)
+  const today = new Date()
+  const daysToEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate() - today.getDate()
+  const ahead = [cur]
+  if (daysToEnd <= 3) ahead.push(cur + 1)
+  for (const i of used) if (i > cur && !ahead.includes(i)) ahead.push(i)
+  const g = document.createElement("optgroup")
+  g.label = ahead.length > 1 ? "Bieżący i kolejne" : "Bieżący"
+  for (const i of ahead.sort((a, b) => a - b)) g.appendChild(new Option(label(i), String(i)))
+  sel.appendChild(g)
   // wcześniejsze: poprzedni miesiąc i wszystkie z wpisami
   const past = [...used].filter(i => i < cur)
   if (!past.includes(cur - 1)) past.push(cur - 1)
