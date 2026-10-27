@@ -213,6 +213,21 @@
   <footer class="author">Autor: Rafał Saniewski · 2026</footer>
 </main>
 
+<dialog id="sdlg">
+  <form method="dialog" id="sform">
+    <h3 id="sTitle"></h3>
+    <label><span id="sLabel"></span>
+      <input type="text" id="sInput" inputmode="decimal" autocomplete="off" enterkeyhint="done">
+    </label>
+    <div class="hint" id="sHint"></div>
+    <div class="actions">
+      <button type="button" class="danger" id="sClear">Usuń</button>
+      <button type="button" id="sCancel">Anuluj</button>
+      <button type="submit" class="primary">Zapisz</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="bdlg">
   <h3>Czas na backup 💾</h3>
   <p id="bmsg"></p>
@@ -494,29 +509,58 @@ function renderNorm(norm, total, effNorm, paidHours, absParts) {
     : ""
 }
 
-$("setRate").onclick = () => {
-  const cur = settings.rate ? String(settings.rate).replace(".", ",") : ""
-  const v = prompt("Stawka za godzinę w zł (np. 30,50). Zostaw puste, aby usunąć.", cur)
-  if (v === null) return
-  if (v.trim() === "") { settings.rate = 0 }
-  else {
-    const n = parseFloat(v.replace(/\s/g, "").replace(",", "."))
-    if (!(n > 0 && n < 100000)) return alert("Podaj poprawną kwotę, np. 30,50.")
+// ---------- Okno ustawień (zamiast prompt(), który nie działa w aplikacji z ekranu głównego iPhone'a) ----------
+let sSave = null
+const parseNum = v => parseFloat(String(v).replace(/\s/g, "").replace(",", "."))
+function askNumber({ title, label, value, hint, clearable, onSave }) {
+  $("sTitle").textContent = title
+  $("sLabel").textContent = label
+  $("sInput").value = value
+  $("sHint").textContent = hint || ""
+  $("sClear").hidden = !clearable
+  sSave = onSave
+  $("sdlg").showModal()
+  setTimeout(() => { $("sInput").focus(); $("sInput").select() }, 50)
+}
+$("sform").addEventListener("submit", ev => {
+  ev.preventDefault()
+  const v = $("sInput").value.trim()
+  const err = sSave(v)
+  if (err) { $("sHint").textContent = err; $("sHint").style.color = "var(--stop)"; return }
+  $("sHint").style.color = ""
+  $("sdlg").close()
+  saveSettings()
+  render()
+})
+$("sCancel").onclick = () => { $("sHint").style.color = ""; $("sdlg").close() }
+$("sClear").onclick = () => { sSave(""); $("sdlg").close(); saveSettings(); render() }
+
+$("setRate").onclick = () => askNumber({
+  title: "Stawka godzinowa",
+  label: "Kwota za godzinę (zł)",
+  value: settings.rate ? String(settings.rate).replace(".", ",") : "",
+  hint: "Np. 30,50",
+  clearable: !!settings.rate,
+  onSave: v => {
+    if (v === "") { settings.rate = 0; return }
+    const n = parseNum(v)
+    if (!(n > 0 && n < 100000)) return "Podaj poprawną kwotę, np. 30,50."
     settings.rate = Math.round(n * 100) / 100
   }
-  saveSettings()
-  render()
-}
+})
 
-$("setHours").onclick = () => {
-  const v = prompt("Ile godzin dziennie wynosi Twój etat? (np. 8, 7, 4)", String(settings.hoursPerDay))
-  if (v === null) return
-  const n = parseFloat(v.replace(",", "."))
-  if (!(n > 0 && n <= 24)) return alert("Podaj liczbę od 1 do 24.")
-  settings.hoursPerDay = n
-  saveSettings()
-  render()
-}
+$("setHours").onclick = () => askNumber({
+  title: "Godziny etatu",
+  label: "Ile godzin dziennie?",
+  value: String(settings.hoursPerDay).replace(".", ","),
+  hint: "Np. 8 (pełny etat), 4 (pół etatu)",
+  clearable: false,
+  onSave: v => {
+    const n = parseNum(v)
+    if (!(n > 0 && n <= 24)) return "Podaj liczbę od 1 do 24."
+    settings.hoursPerDay = n
+  }
+})
 
 function renderStatus() {
   const today = isoDate(new Date())
